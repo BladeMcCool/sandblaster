@@ -35,23 +35,25 @@ type blockReader interface {
 }
 
 func main() {
-	// go miner()
+	go miner()
 	// makekey()
 	pubkey := slurpkey()
 	_ = pubkey
 	// go playerControl()
-	// var tbo = make(chan struct{})
-	// <-tbo
+	var tbo = make(chan struct{})
+	<-tbo
 }
 
 func miner() {
 
 	//start with all ff target []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 	theTarget := new(big.Int)
-	targetIntBytes := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+	targetIntBytes := []byte{0xFF, 0x11, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x99, 0xFF}
 	theTarget.SetBytes(targetIntBytes)
 	theFloatTarget := new(big.Float)
 	theFloatTarget.SetInt(theTarget)
+
+	fmt.Printf("start target bytes %#v\n", theTarget.Bytes())
 
 	//init last diffadjust time to now.
 	lastDiffAdjust := time.Now().UnixNano()
@@ -121,6 +123,7 @@ func miner() {
 			theFloatTarget.Quo(theFloatTarget, blockRateErrBigFloat)
 			theFloatTarget.Int(theTarget)
 			fmt.Printf("newinttarget: %.s\n", theTarget)
+			fmt.Printf("new target bytes %#v\n", theTarget.Bytes())
 			fmt.Printf("lastHash was: %#v\n", lastHash)
 			lastDiffAdjust = now
 			// break

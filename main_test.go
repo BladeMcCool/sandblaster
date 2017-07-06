@@ -166,3 +166,9 @@ func TestCreateWorld(t *testing.T) {
 	// fmt.Printf("World seed sig: %x\n", sig)
 	// fmt.Printf("World seed sig bytes: %#v\n", sig)
 }
+
+func TestScrapey(t *testing.T) {
+	fmt.Println("yes this runs1.")
+	scrapey()
+	fmt.Println("yes this runs.2")
+}

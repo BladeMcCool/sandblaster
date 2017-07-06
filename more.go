@@ -116,3 +116,7 @@ func createworld(ownerPlayer *player, seed string) *worldstate {
 }
 
 func drawWorld() {}
+
+func scrapey() {
+	fmt.Printf("Yeah here.\n")
+}
