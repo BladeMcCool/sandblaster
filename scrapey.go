@@ -1,8 +1,11 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"github.com/PuerkitoBio/goquery"
+	"github.com/kr/pretty"
+	_ "github.com/nakagami/firebirdsql"
 	"github.com/spaolacci/murmur3"
 	_ "io"
 	"io/ioutil"
@@ -11,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -33,7 +37,12 @@ func scrapey() {
 	// 	fmt.Println(i, item.Text())
 	// })
 
-	hinkyDink()
+	hinkyProxies := hinkyDink()
+	_ = hinkyProxies
+	proxyDb := connectDb()
+	defer proxyDb.Close()
+	saveProxies(proxyDb, hinkyProxies)
+	printAllproxies(proxyDb)
 
 	//read the first page, url set here.
 	//check our local cache first, if page is not in it or is old, get fresh.
@@ -43,7 +52,56 @@ func scrapey() {
 
 }
 
-func hinkyDink() {
+func saveProxies(conn *sql.DB, proxies []proxyInfo) {
+	for _, proxy := range proxies {
+		_, err := conn.Exec("INSERT INTO proxies (ip, port, country, foundon) VALUES (?,?,?,?)", proxy.ip, proxy.port, proxy.claimedCountry, proxy.foundOn)
+		if err != nil {
+			log.Printf("sql err? %s", err.Error())
+		}
+	}
+}
+func printAllproxies(conn *sql.DB) {
+	rows, err := conn.Query("SELECT ip, port, country, foundon FROM proxies ORDER BY country, ip")
+	defer rows.Close()
+	if err != nil {
+		log.Printf("sql err? %s", err.Error())
+	}
+	for rows.Next() {
+		proxy := proxyInfo{}
+		err := rows.Scan(&proxy.ip, &proxy.port, &proxy.claimedCountry, &proxy.foundOn)
+		if err != nil {
+			log.Printf("sql err %s", err.Error())
+		}
+		log.Printf("row: %#v", proxy)
+	}
+	log.Printf("results: ")
+}
+
+func connectDb() *sql.DB {
+	// var n int
+	// conn, err := sql.Open("firebirdsql", `SYSDBA:asshat1234@localhost/C:\Program\ Files\Firebird\Firebird_3_0\PROXIES.FDB`)
+	// conn, connErr := sql.Open("firebirdsql", `SYSDBA:asshat1234@localhost/c:\\Program Files\\Firebird\\Firebird_3_0\\proxies.fdb`)
+	// conn, connErr := sql.Open("firebirdsql", `SYSDBA:asshat1234@localhost/c:\\Program Files\\Firebird\\Firebird_3_0\\proxies.fdb`)
+	conn, connErr := sql.Open("firebirdsql", `sysdba:asshat1234@localhost:3050/c:/fbdata/proxies.fdb`)
+	// defer conn.Close()
+	if connErr != nil {
+		log.Fatalf("error from sql: %s", connErr.Error())
+		log.Println("errro wot")
+	}
+	log.Println("guess no error!!")
+
+	// conn.QueryRow("SELECT Count(*) FROM rdb$relations").Scan(&n)
+	// goddammit := conn.QueryRow("SELECT Count(*) FROM proxies").Scan(&n)
+	// if goddammit != nil {
+	// 	log.Fatalf("error2 from sql: %s", goddammit.Error())
+	// 	log.Println("errro2 wot")
+	// }
+	// // conn.QueryRow("SELECT Count(*) FROM rdb$relations")
+	// fmt.Println("Proxies record count=", n)
+	// _ = n
+	return conn
+}
+func hinkyDink() []proxyInfo {
 	hinkyBase := "http://www.mrhinkydink.com/"
 	startUrl := hinkyBase + "proxies.htm"
 	firstPage := getDoc(startUrl)
@@ -55,10 +113,17 @@ func hinkyDink() {
 	// if err != nil {
 	// 	log.Fatalf("regexp err: %s\n", err.Error())
 	// }
+	resultPages := []*goquery.Document{
+		firstPage,
+	}
+
+	log.Printf("here1\n")
 	firstPage.Find("a.menu").Each(func(i int, item *goquery.Selection) {
+		log.Printf("found a menu item ...\n")
 		linkPath, _ := item.Attr("href")
 		linkText := item.Text()
-		matchInfo := proxyPageRe.FindSubmatch([]byte(linkText))
+		matchInfo := proxyPageRe.FindStringSubmatch(linkText)
+		log.Printf("extract of matching menuitem text: % #v\n", pretty.Formatter(matchInfo))
 		if len(matchInfo) != 2 {
 			return
 		}
@@ -67,15 +132,65 @@ func hinkyDink() {
 		if pageNum <= 1 {
 			return
 		}
-		log.Printf("url for page %d is %s\n", pageNum, fullLink)
-
+		log.Printf("url for page %d is %s (will sleep and then fetch its contents.)\n", pageNum, fullLink)
+		time.Sleep(1 * time.Second)
+		pageDocument := getDoc(fullLink)
+		resultPages = append(resultPages, pageDocument)
 		// for ind, fucker := range matchInfo {
 		// 	fmt.Printf("something: %d %s\n", ind, fucker)
 		// }
 		// // fmt.Printf("something: % #v\n", pretty.Formatter(something))
 		// fmt.Println(i, linkText, linkPath, )
 	})
+	log.Printf("here3, fetched %d pages of proxy data to go through.\n", len(resultPages))
 
+	hinkyAllProxies := []proxyInfo{}
+	for i, page := range resultPages {
+		_ = page
+		log.Printf("going through page %d ...\n", i)
+		hinkyAllProxies = append(hinkyAllProxies, hinkyDinkPageExtract(page)...)
+	}
+	log.Printf("got a number %d of this: % #v\n", len(hinkyAllProxies), pretty.Formatter(hinkyAllProxies))
+	return hinkyAllProxies
+}
+
+type proxyInfo struct {
+	ip             string
+	port           int
+	claimedCountry string
+	foundOn        string
+}
+
+func hinkyDinkPageExtract(doc *goquery.Document) []proxyInfo {
+	pageProxies := []proxyInfo{}
+	doc.Find("tr.text").Each(func(i int, tr *goquery.Selection) {
+		log.Printf("This tr has %d nodes.\n", len(tr.Nodes))
+		foundTds := tr.Find("td")
+		log.Printf("This trs foundTds has %d nodes.\n", len(foundTds.Nodes))
+		if foundTds.Length() != 8 {
+			return
+		}
+
+		// debug
+		// foundTds.Each(func(j int, td *goquery.Selection) {
+		// 	html, _ := td.Html()
+		// 	text := td.Text()
+		// 	_ = html
+		// 	log.Printf("something td: %d '%s' and '%s' \n", j, html, text)
+		// })
+		//end debug
+
+		port, _ := strconv.Atoi(foundTds.Eq(1).Text())
+		proxy := proxyInfo{
+			ip:             foundTds.Eq(0).Text(),
+			port:           port,
+			claimedCountry: strings.TrimSpace(foundTds.Eq(4).Text()),
+			foundOn:        "hinkyDink",
+		}
+
+		pageProxies = append(pageProxies, proxy)
+	})
+	return pageProxies
 }
 
 func getDoc(url string) *goquery.Document {
@@ -122,7 +237,10 @@ func checkLocalCache(filename string) bool {
 	log.Printf("File age sec %f\n", fileAgeSec)
 	if int(fileAgeSec) > maxCacheAge {
 		log.Printf("File age sec %f is too old\n", fileAgeSec)
-		return false
+
+		log.Printf("DBG BUT FOR NOW LETS JUST USE IT")
+		// return false
+
 	}
 
 	return true
