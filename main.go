@@ -160,7 +160,11 @@ func miner(pubkey string) {
 		validBlock, lastHash := getBlock(lastHash, currentTarget)
 		blocks = append(blocks, validBlock)
 		foundBlocks++
-		fmt.Printf(".")
+		// fmt.Printf(".")
+		fmt.Printf("validblock (%x) nonce (%d)\n", lastHash, validBlock.header.nonce)
+		// fmt.Printf("targetIntBytes size %d\n", len(targetIntBytes))
+		// fmt.Printf("currentTarget bytes size %d\n", len(currentTarget.Bytes()))
+		// fmt.Printf("block hash bytes size %d\n", len(lastHash))
 
 		//	is time for diff adjustment? (blockcount % adjustevery == 0)
 		if foundBlocks%adjustEvery == 0 {
@@ -182,11 +186,15 @@ func miner(pubkey string) {
 
 			// currentDiff.Sub(easiestTarget, currentTarget)
 			currentDiff.Div(easiestTarget, currentTarget)
+			currentTargetBytes := currentTarget.Bytes()
+			currentTargetZeropadd := make([]byte, len(targetIntBytes)-len(currentTargetBytes))
+			currentTargetZeropadd = append(currentTargetZeropadd, currentTargetBytes...)
 
-			fmt.Printf("newinttarget: %.s\n", currentTarget)
-			fmt.Printf("newdifficulty: %.s\n", currentDiff)
-			fmt.Printf("new target bytes %#v\n", currentTarget.Bytes())
 			fmt.Printf("lastHash was: %#v\n", lastHash)
+			fmt.Printf("newdifficulty: %.s\n", currentDiff)
+			fmt.Printf("newinttarget: %.s\n", currentTarget)
+			fmt.Printf("new target bytes %#v\n", currentTarget.Bytes())
+			fmt.Printf("new target: %x\n", currentTargetZeropadd)
 			lastDiffAdjust = now
 			// break
 		}
@@ -269,8 +277,8 @@ func newEmptyBlock(lastHash []byte, target *big.Int) *block {
 func getBlock(lastHash []byte, target *big.Int) (*block, []byte) {
 	// nonce := uint64(0)
 	block := newEmptyBlock(lastHash, target)
-	header := block.header
-	nonce := &header.nonce
+	// header := &block.header
+	nonce := &(block.header.nonce)
 	for {
 		//	loop until hash of blockdata + nonce is < the target.
 
@@ -279,11 +287,12 @@ func getBlock(lastHash []byte, target *big.Int) (*block, []byte) {
 
 		nonceBytes := make([]byte, 8)
 		binary.LittleEndian.PutUint64(nonceBytes, *nonce)
+		// fmt.Printf("nonce bytes. (%#v) \n", nonceBytes)
 
 		blockHasher := sha1.New()
-		blockHasher.Write([]byte{byte(header.version)})
-		blockHasher.Write(header.prevBlockHash)
-		blockHasher.Write(header.txSetHash)
+		blockHasher.Write([]byte{byte(block.header.version)})
+		blockHasher.Write(block.header.prevBlockHash)
+		blockHasher.Write(block.header.txSetHash)
 		blockHasher.Write(timeBytes)
 		blockHasher.Write(currentTarget.Bytes())
 		blockHasher.Write(nonceBytes)
@@ -304,6 +313,10 @@ func getBlock(lastHash []byte, target *big.Int) (*block, []byte) {
 			// 	time.Now().UnixNano(),
 			// }
 			// lastHash = blockHash
+			// fmt.Printf("in1 (%d) \n", block.header.nonce)
+			// fmt.Printf("in1.header (%#v) \n", block.header)
+			// fmt.Printf("in2 (%d) \n", *nonce)
+			// panic("whoops")
 			return block, blockHash
 			//break
 			// fmt.Printf("Found %d blocks so far.\n", foundBlocks)
@@ -317,6 +330,8 @@ func getBlock(lastHash []byte, target *big.Int) (*block, []byte) {
 		}
 
 		*nonce++
+		// fmt.Printf("var 1 %d\n", nonce)
+		// fmt.Printf("var 2 %d\n", &block.header.nonce)
 	}
 }
 
