@@ -24,37 +24,124 @@ func RandStringBytesRmndr(n int) string {
 }
 
 type block struct {
-	prevHash []byte
-	nonce    uint64
-	data     []byte
-	time     int64
+	header blockHdr
+	tx     []transaction
 }
+
+type blockHdr struct {
+	version       uint8
+	prevBlockHash []byte
+	txSetHash     []byte
+	timestamp     int64
+	target        *big.Int
+	nonce         uint64
+}
+
+//idaes and notes for bitcanvas or bitmap or whatever this is going to be.
+// canvas or layered on pixels weathering over time (self-removing concept)
+// what if the data gets really big ..
+//  periodic crystalization of canvas state? could lock it into a block
+
+//some output types
+//pixelbase : create new raw pixel resource, is the block reward. creates an output that can be spent by owner of the listed pubkey. no input required. no x or y coord associated or rgb info
+//xfer      : transfer pixel resource to another pubkey. x,y and r,g,b would be ignored.
+//canvas    : add a tile to the global canvas at the x, y position specified. pixel cost of canvas tbd. rgb value supplied determines base color of the canvas tileno rgb needed. must be contiguous with existing canvas. multiple creation of the same canvas tile by different pubkeys in the same block should create the canvas tile with the avg color of all the inputs that created it. the cost per new canvas tile could be a block reward amount. also if multiple tx in one block are creating the same canvas tile could create 'refund' outputs to split the excess fee and return it to the pubkeys that sent it
+//            .. what if miners set the fee for this independently? multiple claims on the same canvas time come in at the same time, pick a winner based on fee? any tx that was trying to grab it but didnt win it in the block would just be recognized as a loser tx and removed from mempool/refunded etc.
+//fill      : add r,g,b to a x,y coord on the canvas. result color of the tile will be whichever color (or avg of colors) has had the most layers applied to that tile. multiple 'layers' can be applied at once by using a >1 value for pixels field in the output tx.
+//
+
+const (
+	OutputTypePixelbase = iota
+	OutputTypeXfer
+	OutputTypeCanvas
+	OutputTypeFill
+)
+
+type transaction struct {
+	inputs     []output
+	signatures []string //each output that is being used as an input needs to have a matching valid signature here.
+	outputs    []output
+}
+
+func (b *block) getTxSetHash() []byte {
+	blockDataHasher := sha1.New()
+	//do this need to rebuild whole thing each time we call it? could we just add to the hasher data each time new tx comes in instead?
+	for _, tx := range b.tx {
+		for _, in := range tx.inputs {
+			blockDataHasher.Write(in.hash)
+		}
+		for _, out := range tx.outputs {
+			blockDataHasher.Write(out.hash)
+		}
+	}
+	return blockDataHasher.Sum(nil)
+}
+func (b *block) updateTxSetHash() {
+	b.header.txSetHash = b.getTxSetHash()
+}
+
+type output struct {
+	outType int
+	pubkey  string //pubkey of who can spend it now
+	pixels  int64
+	color   color
+	coord   coord
+	hash    []byte
+}
+
+type color struct {
+	r int
+	g int
+	b int
+}
+type coord struct {
+	x int64
+	y int64
+}
+type pixel struct {
+	coord
+	color
+}
+
+//every pixel in the canvas' will have to have its current canvas state and color value computed by processing the immutable history of the block chain.
+var canvas = [][]*pixel{}
 
 type blockReader interface {
 	read()
 }
 
 func main() {
-	go miner()
 	// makekey()
 	pubkey := slurpkey()
 	_ = pubkey
+
+	go miner("pubkey standin for PixelBase tx")
 	// go playerControl()
 	var tbo = make(chan struct{})
 	<-tbo
 }
 
-func miner() {
+var easiestTarget = new(big.Int)
+var currentTarget = new(big.Int)
+
+func miner(pubkey string) {
 
 	//start with all ff target []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-	theTarget := new(big.Int)
-	targetIntBytes := []byte{0xFF, 0x11, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x99, 0xFF}
-	theTarget.SetBytes(targetIntBytes)
-	theFloatTarget := new(big.Float)
-	theFloatTarget.SetInt(theTarget)
+	targetIntBytes := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 
-	fmt.Printf("start target bytes %#v\n", theTarget.Bytes())
+	currentTarget.SetBytes(targetIntBytes)
+	easiestTarget.SetBytes(targetIntBytes)
+	currentTargetFloat := new(big.Float)
+	currentTargetFloat.SetInt(currentTarget)
 
+	fmt.Printf("start target bytes %#v\n", currentTarget.Bytes())
+
+	currentDiff := new(big.Int)
+	currentDiff.Div(easiestTarget, currentTarget)
+
+	fmt.Printf("start difficulty %.s\n", currentDiff)
+
+	// panic("stop")
 	//init last diffadjust time to now.
 	lastDiffAdjust := time.Now().UnixNano()
 	adjustEvery := 250
@@ -64,51 +151,21 @@ func miner() {
 	foundBlocks := 0
 	blocks := []*block{}
 	lastHash := []byte{}
+	setPixelBasePubkey(pubkey)
 	//loop forever adding to blockchain.
 	for {
 		//	get blockdata (randomstring)
-		blockData := RandStringBytesRmndr(64)
-		nonce := uint64(0)
-		for {
-			//	loop until hash of blockdata + nonce is < the target.
-			blockHasher := sha1.New()
-
-			nonceBytes := make([]byte, 8)
-			binary.LittleEndian.PutUint64(nonceBytes, nonce)
-
-			blockHasher.Write([]byte(blockData))
-			blockHasher.Write([]byte(nonceBytes))
-			blockHash := blockHasher.Sum(nil)
-
-			hashComparer := new(big.Int)
-			hashComparer.SetBytes(blockHash)
-			cmp := hashComparer.Cmp(theTarget)
-			if cmp == -1 {
-				foundBlocks++
-				newBlock := &block{
-					lastHash,
-					nonce,
-					[]byte(blockData),
-					time.Now().UnixNano(),
-				}
-				blocks = append(blocks, newBlock)
-				lastHash = blockHash
-				//break
-				// fmt.Printf("Found %d blocks so far.\n", foundBlocks)
-				// fmt.Printf("Target was: %s\n", theTarget)
-				// fmt.Printf("Hash   was: %s\n", hashComparer)
-				// fmt.Printf("Blockdata  was: %s\n", blockData)
-				// fmt.Printf("Nonce  was: %d\n", nonce)
-				// fmt.Printf("block data: %#v", newBlock)
-				fmt.Printf("blocks len: %d\n", len(blocks))
-				break
-			}
-
-			nonce++
-		}
+		// blockData := RandStringBytesRmndr(64)
+		// validBlock, lastHash := getBlock(blockData, lastHash)
+		validBlock, lastHash := getBlock(lastHash, currentTarget)
+		blocks = append(blocks, validBlock)
+		foundBlocks++
+		fmt.Printf(".")
 
 		//	is time for diff adjustment? (blockcount % adjustevery == 0)
 		if foundBlocks%adjustEvery == 0 {
+			fmt.Printf("\n\n")
+
 			fmt.Printf("foundBlocks == %d, time to adjust difficulty.\n", foundBlocks)
 			now := time.Now().UnixNano()
 			nsSinceLastDiffAdjust := now - lastDiffAdjust
@@ -120,10 +177,15 @@ func miner() {
 			fmt.Printf("diff is %.2fx too easy\n", blockRateErr)
 
 			blockRateErrBigFloat := big.NewFloat(blockRateErr)
-			theFloatTarget.Quo(theFloatTarget, blockRateErrBigFloat)
-			theFloatTarget.Int(theTarget)
-			fmt.Printf("newinttarget: %.s\n", theTarget)
-			fmt.Printf("new target bytes %#v\n", theTarget.Bytes())
+			currentTargetFloat.Quo(currentTargetFloat, blockRateErrBigFloat)
+			currentTargetFloat.Int(currentTarget)
+
+			// currentDiff.Sub(easiestTarget, currentTarget)
+			currentDiff.Div(easiestTarget, currentTarget)
+
+			fmt.Printf("newinttarget: %.s\n", currentTarget)
+			fmt.Printf("newdifficulty: %.s\n", currentDiff)
+			fmt.Printf("new target bytes %#v\n", currentTarget.Bytes())
 			fmt.Printf("lastHash was: %#v\n", lastHash)
 			lastDiffAdjust = now
 			// break
@@ -140,6 +202,122 @@ func miner() {
 		//		set new target in place.
 	}
 
+}
+
+func setPixelBasePubkey(pubkey string) {
+
+}
+
+// func gotNewTx() {
+// 	//got a new tx so add it to the tx list and rebuild the block data
+// 	currentBlock.getTxSetHash()
+// }
+// func gotNewBlock() {
+// 	//change last block hash to the hash of this new block
+// 	//any tx that were in that new block that we just got must be made sure to not exist in the block we're working on (because they would make it invalid)
+// 	//for now, just wipe all the tx and start over with pixelbase tx only.
+// 	currentBlock.prevHash = lastHash
+// 	rebuildBlockData()
+// }
+
+// func staleBlockTimestamp() {
+// 	//if we havent called rebuildBlockData for a while then freshen the timestamp used in the block data
+// 	//blockdata.timestamp = now
+// 	currentBlock.time = time.Now().UnixNano()
+// 	rebuildBlockData()
+// }
+
+var blockData string = ""
+var blockTxSetHash []byte = []byte{}
+var lastHash []byte
+
+// var currentBlock =
+
+func rebuildBlockHdr() {
+	// blockHeaderString =
+	// //update the block data string we are combining with the nonce during mining to be based on the latest info.
+	// blockData = ""
+	// blockDataHasher := sha1.New()
+	// // for range()
+	// blockDataHasher.Write()
+
+	// currentBlock.data = []byte(blockData)
+	// blockTxSetHash =
+	// currentBlock.getTxSetHash()
+}
+
+func newEmptyBlock(lastHash []byte, target *big.Int) *block {
+	var block = &block{
+		blockHdr{
+			1,
+			lastHash,
+			[]byte{},
+			time.Now().UnixNano(),
+			target,
+			0,
+		},
+
+		[]transaction{
+		//TODO: put a pixelbase tx here.
+		},
+	}
+	block.updateTxSetHash()
+	return block
+}
+
+// func getBlock(blockData string, lastHash []byte) (*block, []byte) {
+func getBlock(lastHash []byte, target *big.Int) (*block, []byte) {
+	// nonce := uint64(0)
+	block := newEmptyBlock(lastHash, target)
+	header := block.header
+	nonce := &header.nonce
+	for {
+		//	loop until hash of blockdata + nonce is < the target.
+
+		timeBytes := make([]byte, 8)
+		binary.LittleEndian.PutUint64(timeBytes, uint64(time.Now().UnixNano()))
+
+		nonceBytes := make([]byte, 8)
+		binary.LittleEndian.PutUint64(nonceBytes, *nonce)
+
+		blockHasher := sha1.New()
+		blockHasher.Write([]byte{byte(header.version)})
+		blockHasher.Write(header.prevBlockHash)
+		blockHasher.Write(header.txSetHash)
+		blockHasher.Write(timeBytes)
+		blockHasher.Write(currentTarget.Bytes())
+		blockHasher.Write(nonceBytes)
+
+		blockHash := blockHasher.Sum(nil)
+		hashComparer := new(big.Int)
+		hashComparer.SetBytes(blockHash)
+		cmp := hashComparer.Cmp(currentTarget)
+
+		if cmp == -1 {
+			// currentBlock.nonce = nonce
+			// currentBlock.prevHash = lastHash
+
+			// newBlock := &block{
+			// 	lastHash,
+			// 	nonce,
+			// 	[]byte(blockData),
+			// 	time.Now().UnixNano(),
+			// }
+			// lastHash = blockHash
+			return block, blockHash
+			//break
+			// fmt.Printf("Found %d blocks so far.\n", foundBlocks)
+			// fmt.Printf("Target was: %s\n", currentTarget)
+			// fmt.Printf("Hash   was: %s\n", hashComparer)
+			// fmt.Printf("Blockdata  was: %s\n", blockData)
+			// fmt.Printf("Nonce  was: %d\n", nonce)
+			// fmt.Printf("block data: %#v", newBlock)
+			// fmt.Printf("blocks len: %d\n", len(blocks))
+			// break
+		}
+
+		*nonce++
+	}
 }
 
 func funstuff() {
@@ -241,3 +419,5 @@ func funstuff() {
 		lastfunner = verybig
 	}
 }
+
+// ---------------

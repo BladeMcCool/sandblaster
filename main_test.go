@@ -172,3 +172,7 @@ func TestScrapey(t *testing.T) {
 	scrapey()
 	fmt.Println("yes this runs.2")
 }
+
+func TestMiner(t *testing.T) {
+	main()
+}
